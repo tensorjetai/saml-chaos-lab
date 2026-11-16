@@ -2,6 +2,7 @@ import { deflateRawSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { buildIdp, type IdpProject, type IdpRunContextStore } from "../../apps/idp/src/app.js";
 import { generateResponse, generateSigningMaterial } from "@saml-chaos/saml-core";
+import { renderScenario } from "@saml-chaos/scenarios";
 import { ActivationService } from "@saml-chaos/browser-runner";
 import { randomBytes } from "node:crypto";
 
@@ -419,6 +420,68 @@ describe("internal certificate rotation", () => {
     });
     expect(ok.statusCode).toBe(204);
     expect(rotated).toEqual(["p1"]);
+    await app.close();
+  });
+
+  it("delivers unsolicited IdP-initiated responses and records loopback probe callbacks", async () => {
+    const signing = generateSigningMaterial();
+    const activationService = new ActivationService(randomBytes(32));
+    const hits: Array<{ projectId: string; scenarioId: string; probeId: string }> = [];
+    let capturedProbeUrl = "";
+    const project = {
+      id: "p1",
+      entityId: "https://idp.example/metadata/p1",
+      ssoUrl: "https://idp.example/sso/p1",
+      spEntityId: "urn:sp",
+      acsUrl: "https://sp.example/saml/acs",
+      nameId: "synthetic@invalid.example",
+      nameIdFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+      attributes: {},
+      current: signing,
+      next: signing,
+      nextCertificate: signing.certificate,
+      verificationStatus: "verified" as const,
+    };
+    const app = await buildIdp({
+      projects: new Map([[project.id, project]]),
+      activationService,
+      renderScenario: (id, plan, certificates) => {
+        capturedProbeUrl = plan.probeUrl ?? "";
+        return renderScenario("SAML-BASE-001", plan, certificates);
+      },
+      onProbeHit: (projectId, scenarioId, probeId) => {
+        hits.push({ projectId, scenarioId, probeId });
+      },
+    });
+
+    const token = await activationService.issue({
+      projectId: "p1",
+      runId: "r1",
+      scenarioId: "SAML-CUSTOM-PROBE",
+      browserSessionId: "b1",
+    });
+    const unactivated = await app.inject({ method: "GET", url: "/unsolicited/p1" });
+    expect(unactivated.statusCode).toBe(400);
+
+    const activated = await app.inject({
+      method: "GET",
+      url: `/activate/p1?token=${encodeURIComponent(token)}&browserSessionId=b1`,
+    });
+    const unsolicited = await app.inject({
+      method: "GET",
+      url: "/unsolicited/p1",
+      headers: { cookie: activated.headers["set-cookie"]! },
+    });
+    expect(unsolicited.statusCode).toBe(200);
+    expect(unsolicited.body).toContain('name="SAMLResponse"');
+    expect(capturedProbeUrl).toContain("https://idp.example/probe/p1/");
+
+    const probePath = new URL(capturedProbeUrl).pathname;
+    const probeRes = await app.inject({ method: "GET", url: probePath });
+    expect(probeRes.statusCode).toBe(200);
+    expect(hits).toEqual([
+      { projectId: "p1", scenarioId: "SAML-CUSTOM-PROBE", probeId: probePath.split("/").pop()! },
+    ]);
     await app.close();
   });
 });

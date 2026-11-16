@@ -9,7 +9,9 @@ import { normalizeExactUrl, verifyDestination } from "@saml-chaos/target-safety"
 import { buildIdp, type IdpProject } from "../../../apps/idp/src/app.js";
 import {
   optionString,
+  parseFailureUrls,
   parseOptions,
+  parseSignMode,
   pinTargetUrls,
   readState,
   reservePort,
@@ -22,7 +24,9 @@ import {
 
 export {
   optionString,
+  parseFailureUrls,
   parseOptions,
+  parseSignMode,
   pinTargetUrls,
   readState,
   reservePort,
@@ -55,6 +59,12 @@ export async function runLocalTest(options: Record<string, string | boolean>): P
   const successUrlPattern = optionString(options, "success-url");
   const successSelector =
     typeof options["dom-selector"] === "string" ? options["dom-selector"] : undefined;
+  const failureUrls = parseFailureUrls(
+    typeof options["failure-url"] === "string" ? options["failure-url"] : undefined,
+  );
+  const signMode = parseSignMode(
+    typeof options["sign-mode"] === "string" ? options["sign-mode"] : undefined,
+  );
   const failOn = optionString(options, "fail-on", "high");
   if (failOn !== "high" && failOn !== "critical") throw new Error("invalid_fail_on_level");
   const stateDir = resolve(optionString(options, "state-dir", ".saml-chaos-lab"));
@@ -74,6 +84,7 @@ export async function runLocalTest(options: Record<string, string | boolean>): P
     current,
     next,
     nextCertificate: next.certificate,
+    signMode,
     verificationStatus: "verified",
   };
   const activation = new ActivationService(randomBytes(32));
@@ -141,7 +152,7 @@ export async function runLocalTest(options: Record<string, string | boolean>): P
         authorizeRequest,
         pinnedAddresses,
         successUrl,
-        failureUrls: [/\/saml\/error(?:\?|$)/],
+        failureUrls,
         spoofedIdentityToken: "chaos-spoofed-admin",
         ...(scenario.expectedOutcome === "reject" ? { strictReject: true } : {}),
         ...(successSelector ? { successSelector } : {}),

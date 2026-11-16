@@ -90,15 +90,17 @@ npx saml-chaos-lab test \
   --fail-on high
 ```
 
-| Option                    | Required | Default           | Description                                                                      |
-| :------------------------ | :------- | :---------------- | :------------------------------------------------------------------------------- |
-| `--login-url <url>`       | **Yes**  | —                 | SP login entry URL that initiates SAML `AuthnRequest` redirects.                 |
-| `--acs-url <url>`         | **Yes**  | —                 | SP Assertion Consumer Service endpoint expecting `POST` SAML responses.          |
-| `--sp-entity-id <id>`     | **Yes**  | —                 | Expected Service Provider `EntityID` / Audience URI.                             |
-| `--success-url <pattern>` | **Yes**  | —                 | Regular expression matching the post-login authenticated URL (evaluated safely). |
-| `--dom-selector <css>`    | No       | —                 | Optional CSS selector required to appear after a successful login.               |
-| `--fail-on <level>`       | No       | `high`            | Exit with code `1` if any failed scenario meets `high` or `critical`.            |
-| `--state-dir <dir>`       | No       | `.saml-chaos-lab` | State directory created by `saml-chaos-lab metadata`.                            |
+| Option                    | Required | Default              | Description                                                                      |
+| :------------------------ | :------- | :------------------- | :------------------------------------------------------------------------------- |
+| `--login-url <url>`       | **Yes**  | —                    | SP login entry URL that initiates SAML `AuthnRequest` redirects.                 |
+| `--acs-url <url>`         | **Yes**  | —                    | SP Assertion Consumer Service endpoint expecting `POST` SAML responses.          |
+| `--sp-entity-id <id>`     | **Yes**  | —                    | Expected Service Provider `EntityID` / Audience URI.                             |
+| `--success-url <pattern>` | **Yes**  | —                    | Regular expression matching the post-login authenticated URL (evaluated safely). |
+| `--dom-selector <css>`    | No       | —                    | Optional CSS selector required to appear after a successful login.               |
+| `--failure-url <pattern>` | No       | `/\/saml\/error(?:\? | $)/`                                                                             | Regular expression matching explicit SP SSO rejection URLs. |
+| `--sign-mode <mode>`      | No       | `assertion`          | Signed XML scope: `assertion`, `response`, or `both`.                            |
+| `--fail-on <level>`       | No       | `high`               | Exit with code `1` if any failed scenario meets `high` or `critical`.            |
+| `--state-dir <dir>`       | No       | `.saml-chaos-lab`    | State directory created by `saml-chaos-lab metadata`.                            |
 
 ### Exit Codes
 
@@ -171,16 +173,16 @@ Prefer running without installing Chromium on the host? Use the Apache-2.0 [`Doc
 
 ## Open-Core vs. Commercial Pro Edition
 
-| Capability                                                  | Open-Core CLI (`saml-chaos-lab` on npm)                                             | Commercial Container (`registry.tensorjetai.com/saml-chaos-lab-commercial`) |
-| :---------------------------------------------------------- | :---------------------------------------------------------------------------------- | :-------------------------------------------------------------------------- |
-| License                                                     | `Apache-2.0`                                                                        | Commercial License (`UNLICENSED`, offline Ed25519 `TJ_LICENSE_KEY`)         |
-| Baseline Hygiene Suite (6 checks)                           | Included (`SAML-BASE-001`, `TIME-001`, `AUD-001`, `DEST-001`, `ISS-001`, `SIG-001`) | Included                                                                    |
-| XML Signature Wrapping (XSW 1–10)                           | —                                                                                   | Included (`SAML-XSW-001` .. `SAML-XSW-010`)                                 |
-| C14N Comment/PI/Void Canonicalization                       | —                                                                                   | Included (`SAML-C14N-001` .. `SAML-C14N-003`)                               |
-| Differential Parser & DTD/XSLT Probes                       | —                                                                                   | Included (`SAML-DIFF-*`, `SAML-XML-*`)                                      |
-| Replay, Clock Skew, Dual-Key Cert Rollover & Binding Checks | —                                                                                   | Included (`SAML-REPLAY-001`, `TIME-*`, `CERT-*`, `SIG-002`, `FLOW-*`)       |
-| Audit Reports & Artifact Integrity                          | Stdout & GitHub Step Summary Markdown                                               | SHA-256 Tamper-Evident JSON, Self-Contained HTML, SARIF 2.1.0               |
-| Distribution                                                | `npx saml-chaos-lab`                                                                | Multi-arch (`amd64`/`arm64`) hardened Docker image with bundled Chromium    |
+| Capability                                                 | Open-Core CLI (`saml-chaos-lab` on npm)                                             | Commercial Container (`registry.tensorjetai.com/saml-chaos-lab-commercial`) |
+| :--------------------------------------------------------- | :---------------------------------------------------------------------------------- | :-------------------------------------------------------------------------- |
+| License                                                    | `Apache-2.0`                                                                        | Commercial License (`UNLICENSED`, offline Ed25519 `TJ_LICENSE_KEY`)         |
+| Baseline Hygiene Suite (6 checks)                          | Included (`SAML-BASE-001`, `TIME-001`, `AUD-001`, `DEST-001`, `ISS-001`, `SIG-001`) | Included                                                                    |
+| XML Signature Wrapping (XSW 1–10)                          | —                                                                                   | Included (`SAML-XSW-001` .. `SAML-XSW-010`)                                 |
+| C14N Comment/PI/Void Canonicalization                      | —                                                                                   | Included (`SAML-C14N-001` .. `SAML-C14N-003`)                               |
+| Differential Parser, Role & DTD/XXE/XSLT Probes            | —                                                                                   | Included (`SAML-DIFF-*`, `SAML-ATTR-001`, `SAML-XML-*`)                     |
+| Replay, KeyInfo/SHA-1 Downgrade, Rollover & Binding Checks | —                                                                                   | Included (`SAML-REPLAY-001`, `TIME-*`, `CERT-*`, `SIG-002..004`, `FLOW-*`)  |
+| Audit Reports & Artifact Integrity                         | Stdout & GitHub Step Summary Markdown                                               | SHA-256 Tamper-Evident JSON, Self-Contained HTML, SARIF 2.1.0               |
+| Distribution                                               | `npx saml-chaos-lab`                                                                | Multi-arch (`amd64`/`arm64`) hardened Docker image with bundled Chromium    |
 
 Pull the commercial edition after checkout at [saml.tensorjetai.com](https://saml.tensorjetai.com):
 

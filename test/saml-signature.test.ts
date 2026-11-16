@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { generateSigningMaterial, signXml, verifyXmlSignature } from "@saml-chaos/saml-core";
+import {
+  generateResponse,
+  generateSigningMaterial,
+  signXml,
+  verifyXmlSignature,
+} from "@saml-chaos/saml-core";
+import { parseFailureUrls, parseSignMode } from "../packages/cli/src/helpers.js";
 
 describe("XML signature known-answer behavior", () => {
   it("validates a signed assertion and rejects a post-sign mutation", () => {
@@ -14,5 +20,32 @@ describe("XML signature known-answer behavior", () => {
         material.certificate,
       ),
     ).toBe(false);
+  });
+
+  it("supports response-level and dual assertion+response signing modes", () => {
+    const signing = generateSigningMaterial();
+    const basePlan = {
+      issuer: "https://idp.test/metadata",
+      requestId: "_req",
+      destination: "https://sp.test/acs",
+      audience: "urn:sp",
+      nameId: "user@test.example",
+      nameIdFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+      attributes: {},
+      signing,
+    };
+    const responseSigned = generateResponse({ ...basePlan, signMode: "response" });
+    expect(responseSigned.xml.match(/<(?:ds:)?Signature\b/g)).toHaveLength(1);
+    expect(verifyXmlSignature(responseSigned.xml, signing.certificate)).toBe(true);
+
+    const bothSigned = generateResponse({ ...basePlan, signMode: "both" });
+    expect(bothSigned.xml.match(/<(?:ds:)?Signature\b/g)).toHaveLength(2);
+    expect(verifyXmlSignature(bothSigned.xml, signing.certificate)).toBe(true);
+
+    expect(parseSignMode(undefined)).toBe("assertion");
+    expect(parseSignMode("both")).toBe("both");
+    expect(() => parseSignMode("invalid")).toThrow("invalid_sign_mode");
+    expect(parseFailureUrls("/auth/failed$")[0]!.test("/auth/failed")).toBe(true);
+    expect(() => parseFailureUrls("[unclosed")).toThrow("invalid_failure_url_pattern");
   });
 });

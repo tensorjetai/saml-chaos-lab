@@ -7,6 +7,7 @@ import {
   createProjectCertificates,
   decryptPrivateKey,
   generateMetadata,
+  type SignMode,
   type SigningMaterial,
 } from "@saml-chaos/saml-core";
 import { normalizeExactUrl, verifyDestination } from "@saml-chaos/target-safety";
@@ -172,6 +173,21 @@ export function statusFor(
     (expected === "reject" && outcome === "rejected")
     ? "passed"
     : "failed";
+}
+
+export function parseFailureUrls(pattern?: string): RegExp[] {
+  if (!pattern) return [/\/saml\/error(?:\?|$)/];
+  try {
+    return [new RegExp(pattern)];
+  } catch {
+    throw new Error("invalid_failure_url_pattern");
+  }
+}
+
+export function parseSignMode(value?: string): SignMode {
+  if (!value) return "assertion";
+  if (value === "assertion" || value === "response" || value === "both") return value;
+  throw new Error("invalid_sign_mode");
 }
 
 export function severityRank(severity: string): number {

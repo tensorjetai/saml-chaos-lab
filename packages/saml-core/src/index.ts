@@ -165,7 +165,12 @@ const ENVELOPED = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
 const RSA_SHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 const SHA256 = "http://www.w3.org/2001/04/xmlenc#sha256";
 
-export function signXml(xml: string, material: SigningMaterial, referenceXPath: string): string {
+export function signXml(
+  xml: string,
+  material: SigningMaterial,
+  referenceXPath: string,
+  locationReferenceXPath = "//*[local-name(.)='Issuer']",
+): string {
   const signature = new SignedXml({
     privateKey: material.privateKey,
     publicCert: material.certificate,
@@ -178,7 +183,7 @@ export function signXml(xml: string, material: SigningMaterial, referenceXPath: 
     digestAlgorithm: SHA256,
   });
   signature.computeSignature(xml, {
-    location: { reference: "//*[local-name(.)='Issuer']", action: "after" },
+    location: { reference: locationReferenceXPath, action: "after" },
   });
   return signature.getSignedXml();
 }
@@ -299,6 +304,8 @@ export function parseRedirectAuthnRequest(
   };
 }
 
+export type SignMode = "assertion" | "response" | "both";
+
 export interface ResponsePlan {
   issuer: string;
   requestId: string;
@@ -315,6 +322,8 @@ export interface ResponsePlan {
   responseDestination?: string;
   recipient?: string;
   unsigned?: boolean;
+  signMode?: SignMode;
+  probeUrl?: string;
 }
 
 export interface GeneratedResponse {
@@ -347,10 +356,21 @@ export function generateResponse(plan: ResponsePlan): GeneratedResponse {
     )
     .join("");
   const assertion = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${assertionId}" Version="2.0" IssueInstant="${issuedAt}"><saml:Issuer>${xmlEscape(plan.issuer)}</saml:Issuer><saml:Subject><saml:NameID Format="${xmlEscape(plan.nameIdFormat)}">${xmlEscape(plan.nameId)}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData InResponseTo="${xmlEscape(plan.requestId)}" Recipient="${xmlEscape(recipient)}" NotOnOrAfter="${notOnOrAfter}"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="${notBefore}" NotOnOrAfter="${notOnOrAfter}"><saml:AudienceRestriction><saml:Audience>${xmlEscape(plan.audience)}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="${issuedAt}" SessionIndex="${sessionId}" SessionNotOnOrAfter="${notOnOrAfter}"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement><saml:AttributeStatement>${attributes}</saml:AttributeStatement></saml:Assertion>`;
-  const signedAssertion = plan.unsigned
-    ? assertion
-    : signXml(assertion, plan.signing, "//*[local-name(.)='Assertion']");
-  const xml = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="${responseId}" Version="2.0" IssueInstant="${issuedAt}" Destination="${xmlEscape(responseDestination)}" InResponseTo="${xmlEscape(plan.requestId)}"><saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">${xmlEscape(plan.issuer)}</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>${signedAssertion}</samlp:Response>`;
+  const signMode = plan.signMode ?? "assertion";
+  const signedAssertion =
+    plan.unsigned || signMode === "response"
+      ? assertion
+      : signXml(assertion, plan.signing, "//*[local-name(.)='Assertion']");
+  const rawResponse = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="${responseId}" Version="2.0" IssueInstant="${issuedAt}" Destination="${xmlEscape(responseDestination)}" InResponseTo="${xmlEscape(plan.requestId)}"><saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">${xmlEscape(plan.issuer)}</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>${signedAssertion}</samlp:Response>`;
+  const xml =
+    !plan.unsigned && (signMode === "response" || signMode === "both")
+      ? signXml(
+          rawResponse,
+          plan.signing,
+          "//*[local-name(.)='Response']",
+          "/*[local-name(.)='Response']/*[local-name(.)='Issuer']",
+        )
+      : rawResponse;
   return {
     responseId,
     assertionId,

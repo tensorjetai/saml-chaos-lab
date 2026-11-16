@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import rateLimit from "@fastify/rate-limit";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import {
   generateMetadata,
   generateResponse,
   parseRedirectAuthnRequest,
   autoPostForm,
   type ResponsePlan,
+  type SignMode,
   type SigningMaterial,
 } from "@saml-chaos/saml-core";
 import { type ActivationScope, type ActivationService } from "@saml-chaos/browser-runner";
@@ -29,6 +30,7 @@ export interface IdpProject {
   current: SigningMaterial;
   nextCertificate: string;
   next?: SigningMaterial;
+  signMode?: SignMode;
   verificationStatus?: "pending" | "verified" | "expired";
 }
 
@@ -81,6 +83,7 @@ export async function buildIdp(
       activeScenario: string | undefined,
       project: IdpProject,
     ) => string[];
+    onProbeHit?: (projectId: string, scenarioId: string, probeId: string) => void;
   } = {},
 ) {
   const projects = options.projects ?? new Map<string, IdpProject>();
@@ -89,6 +92,10 @@ export async function buildIdp(
   const now = options.now ?? Date.now;
   const runContexts = new Map<string, { scope: ActivationScope; expiresAt: number }>();
   const activeScenarios = new Map<string, { scenarioId: string; expiresAt: number }>();
+  const activeProbes = new Map<
+    string,
+    { projectId: string; scenarioId: string; expiresAt: number }
+  >();
   const cleanupRunContexts = () => {
     const current = now();
     for (const [sessionId, context] of runContexts) {
@@ -96,6 +103,9 @@ export async function buildIdp(
     }
     for (const [projectId, scenario] of activeScenarios) {
       if (scenario.expiresAt <= current) activeScenarios.delete(projectId);
+    }
+    for (const [probeId, probe] of activeProbes) {
+      if (probe.expiresAt <= current) activeProbes.delete(probeId);
     }
   };
   const activateRunContext = async (
@@ -331,66 +341,33 @@ export async function buildIdp(
       );
   });
 
-  app.get<{
-    Params: { projectId: string };
-    Querystring: { SAMLRequest?: string; RelayState?: string };
-  }>("/sso/:projectId", async (request, reply) => {
-    let project;
-    try {
-      project = await resolveProject(request.params.projectId);
-    } catch (error) {
-      request.log.error({ err: error }, "project lookup failed");
-      return reply.code(503).send({ error: "project_unavailable" });
-    }
-    if (!project) return reply.code(404).send({ error: "project_not_found" });
-    if (project.verificationStatus && project.verificationStatus !== "verified") {
-      return reply.code(403).send({ error: "project_not_verified" });
-    }
-    if (!request.query.SAMLRequest) {
-      return reply.code(400).send({ error: "invalid_saml_request" });
-    }
-    let activated: ActivationScope | undefined;
-    if (options.activationService) {
-      cleanupRunContexts();
-      const sessionId = cookieValue(request.headers.cookie, "saml_chaos_run");
-      if (sessionId) {
-        try {
-          activated = await consumeRunContext(sessionId, project.id);
-        } catch (error) {
-          request.log.error({ err: error }, "run context consume failed");
-          return reply.code(503).send({ error: "context_unavailable" });
-        }
-      }
-      if (!sessionId || !activated || activated.projectId !== project.id) {
-        metrics.increment("saml_response_total", { status: "rejected" });
-        return reply.code(400).send({ error: "invalid_saml_request" });
-      }
-    }
-    let authnRequest: ReturnType<typeof parseRedirectAuthnRequest>;
-    try {
-      authnRequest = parseRedirectAuthnRequest(
-        request.query.SAMLRequest,
-        request.query.RelayState ?? "",
-        {
-          expectedEntityId: project.spEntityId,
-          verifiedAcsUrl: project.acsUrl,
-          expectedDestination: project.ssoUrl,
-        },
-      );
-    } catch (error) {
-      request.log.debug({ err: error }, "authn request rejected");
-      metrics.increment("saml_response_total", { status: "rejected" });
-      return reply.code(400).send({ error: "invalid_saml_request" });
-    }
-    const responsePlan = {
+  const deliverScenarioResponse = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    project: IdpProject,
+    activated: ActivationScope | undefined,
+    requestId: string,
+    relayState: string,
+  ) => {
+    const idpOrigin = new URL(project.ssoUrl).origin;
+    const probeId = randomUUID();
+    const scenarioId = activated?.scenarioId ?? "SAML-BASE-001";
+    activeProbes.set(probeId, {
+      projectId: project.id,
+      scenarioId,
+      expiresAt: now() + 120_000,
+    });
+    const responsePlan: ResponsePlan = {
       issuer: project.entityId,
-      requestId: authnRequest.id,
+      requestId,
       destination: project.acsUrl,
       audience: project.spEntityId,
       nameId: project.nameId,
       nameIdFormat: project.nameIdFormat,
       attributes: project.attributes,
       signing: project.current,
+      ...(project.signMode ? { signMode: project.signMode } : {}),
+      probeUrl: `${idpOrigin}/probe/${encodeURIComponent(project.id)}/${probeId}`,
     };
     const render = options.renderScenario ?? renderFreeScenario;
     let generated: ReturnType<typeof generateResponse> & {
@@ -409,11 +386,11 @@ export async function buildIdp(
       return reply.code(503).send({ error: "response_unavailable" });
     }
     try {
-      await clearActiveScenario(project.id, activated?.scenarioId ?? "SAML-BASE-001");
+      await clearActiveScenario(project.id, scenarioId);
       await options.recordEvent?.("response.delivered", {
         projectId: project.id,
         ...(activated?.runId ? { runId: activated.runId } : {}),
-        scenarioId: activated?.scenarioId ?? "SAML-BASE-001",
+        scenarioId,
       });
     } catch (error) {
       request.log.error({ err: error }, "scenario context cleanup failed");
@@ -421,7 +398,7 @@ export async function buildIdp(
       return reply.code(503).send({ error: "response_unavailable" });
     }
     metrics.increment("saml_response_total", {
-      scenario: activated?.scenarioId ?? "SAML-BASE-001",
+      scenario: scenarioId,
       status: "delivered",
     });
     const nonce = randomBytes(18).toString("base64url");
@@ -432,15 +409,116 @@ export async function buildIdp(
       .header("cache-control", "no-store")
       .header("referrer-policy", "no-referrer")
       .header("set-cookie", `saml_chaos_run=; Max-Age=0; Path=/; HttpOnly; ${cookieSecurity}`)
-      .send(
-        autoPostForm(
-          project.acsUrl,
-          generated.xml,
-          generated.relayState ?? authnRequest.relayState,
-          nonce,
-        ),
+      .send(autoPostForm(project.acsUrl, generated.xml, generated.relayState ?? relayState, nonce));
+  };
+
+  const resolveActivatedContext = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    project: IdpProject,
+  ): Promise<ActivationScope | undefined | null> => {
+    if (!options.activationService) return undefined;
+    cleanupRunContexts();
+    const sessionId = cookieValue(request.headers.cookie, "saml_chaos_run");
+    let activated: ActivationScope | undefined;
+    if (sessionId) {
+      try {
+        activated = await consumeRunContext(sessionId, project.id);
+      } catch (error) {
+        request.log.error({ err: error }, "run context consume failed");
+        reply.code(503).send({ error: "context_unavailable" });
+        return null;
+      }
+    }
+    if (!sessionId || !activated || activated.projectId !== project.id) {
+      metrics.increment("saml_response_total", { status: "rejected" });
+      reply.code(400).send({ error: "invalid_saml_request" });
+      return null;
+    }
+    return activated;
+  };
+
+  app.get<{
+    Params: { projectId: string };
+    Querystring: { SAMLRequest?: string; RelayState?: string };
+  }>("/sso/:projectId", async (request, reply) => {
+    let project;
+    try {
+      project = await resolveProject(request.params.projectId);
+    } catch (error) {
+      request.log.error({ err: error }, "project lookup failed");
+      return reply.code(503).send({ error: "project_unavailable" });
+    }
+    if (!project) return reply.code(404).send({ error: "project_not_found" });
+    if (project.verificationStatus && project.verificationStatus !== "verified") {
+      return reply.code(403).send({ error: "project_not_verified" });
+    }
+    if (!request.query.SAMLRequest) {
+      return reply.code(400).send({ error: "invalid_saml_request" });
+    }
+    const activated = await resolveActivatedContext(request, reply, project);
+    if (activated === null) return reply;
+    let authnRequest: ReturnType<typeof parseRedirectAuthnRequest>;
+    try {
+      authnRequest = parseRedirectAuthnRequest(
+        request.query.SAMLRequest,
+        request.query.RelayState ?? "",
+        {
+          expectedEntityId: project.spEntityId,
+          verifiedAcsUrl: project.acsUrl,
+          expectedDestination: project.ssoUrl,
+        },
       );
+    } catch (error) {
+      request.log.debug({ err: error }, "authn request rejected");
+      metrics.increment("saml_response_total", { status: "rejected" });
+      return reply.code(400).send({ error: "invalid_saml_request" });
+    }
+    return deliverScenarioResponse(
+      request,
+      reply,
+      project,
+      activated,
+      authnRequest.id,
+      authnRequest.relayState,
+    );
   });
+
+  app.get<{ Params: { projectId: string } }>("/unsolicited/:projectId", async (request, reply) => {
+    let project;
+    try {
+      project = await resolveProject(request.params.projectId);
+    } catch (error) {
+      request.log.error({ err: error }, "project lookup failed");
+      return reply.code(503).send({ error: "project_unavailable" });
+    }
+    if (!project) return reply.code(404).send({ error: "project_not_found" });
+    if (project.verificationStatus && project.verificationStatus !== "verified") {
+      return reply.code(403).send({ error: "project_not_verified" });
+    }
+    const activated = await resolveActivatedContext(request, reply, project);
+    if (activated === null) return reply;
+    return deliverScenarioResponse(request, reply, project, activated, "_unsolicited", "");
+  });
+
+  app.get<{ Params: { projectId: string; probeId: string } }>(
+    "/probe/:projectId/:probeId",
+    { config: { rateLimit: false } },
+    async (request, reply) => {
+      cleanupRunContexts();
+      const { projectId, probeId } = request.params;
+      if (!/^[A-Za-z0-9_-]{8,128}$/.test(probeId)) {
+        return reply.code(400).send({ error: "invalid_probe_id" });
+      }
+      const project = await resolveProject(projectId);
+      if (!project) return reply.code(404).send({ error: "project_not_found" });
+      const active = activeProbes.get(probeId);
+      if (active && active.projectId === project.id) {
+        options.onProbeHit?.(project.id, active.scenarioId, probeId);
+      }
+      return reply.type("text/plain; charset=utf-8").code(200).send("ok");
+    },
+  );
 
   return app;
 }
