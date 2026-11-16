@@ -15,7 +15,9 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run test/*.test.ts test/conformance/*.test.ts test/integration/*.test.ts test/abuse/*.test.ts",
-    "test:e2e": "pnpm --filter saml-chaos-lab build && vitest run test/e2e"
+    "test:e2e": "pnpm --filter saml-chaos-lab build && vitest run test/e2e",
+    "publish:npm": "node scripts/publish-npm.mjs",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@fastify/cors": "11.3.0",
