@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
-import { request } from "node:http";
+import { createServer as createHttpServer, request } from "node:http";
 import { createPinnedProxy } from "../packages/browser-runner/src/pinned-proxy.js";
 import {
   ActivationService,
@@ -8,6 +8,7 @@ import {
   extractSamlTimingFromFormBody,
   observeScenario,
   parseReplayFormBody,
+  renderReplayFormHtml,
   replayWasRejected,
   requestAllowed,
   sanitizeObservedUrl,
@@ -389,5 +390,47 @@ describe("browser outcome observation", () => {
     expect(replayWasRejected("https://sp.example/saml/acs", 409, [])).toBe(true);
     expect(replayWasRejected("https://sp.example/saml/acs", 200, [/\/saml\/error$/])).toBe(false);
     expect(replayWasRejected("https://sp.example/saml/error", 200, [/\/saml\/error$/])).toBe(true);
+  });
+
+  it("escapes replay form HTML attributes cleanly without browser-side JS", () => {
+    const html = renderReplayFormHtml('https://sp.example/saml/acs?a=1&b="x"', [
+      ["SAMLResponse", "abc+123=="],
+      ["RelayState", '"><script>alert(1)</script>'],
+    ]);
+    expect(html).toContain('action="https://sp.example/saml/acs?a=1&amp;b=&quot;x&quot;"');
+    expect(html).toContain('value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"');
+    expect(html).toContain('<button type="submit">');
+  });
+
+  it("closes pinned proxy immediately even when an upstream request hangs in flight", async () => {
+    const hungUpstream = createHttpServer((_req, _res) => {
+      // Intentionally keep the upstream request open until destroyed on proxy teardown.
+    });
+    await new Promise<void>((resolve) => hungUpstream.listen(0, "127.0.0.1", () => resolve()));
+    const address = hungUpstream.address();
+    if (!address || typeof address === "string") throw new Error("upstream_port_unavailable");
+
+    const proxy = await createPinnedProxy({
+      allowedHosts: ["sp.example"],
+      pinnedAddresses: new Map([["sp.example", ["127.0.0.1"]]]),
+    });
+    const proxyUrl = new URL(proxy.serverUrl);
+    const req = request({
+      hostname: proxyUrl.hostname,
+      port: Number(proxyUrl.port),
+      method: "GET",
+      path: `http://sp.example:${address.port}/hang`,
+    });
+    req.on("error", () => {});
+    req.end();
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const closeResult = await Promise.race([
+      proxy.close().then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("timed_out"), 1_000)),
+    ]);
+    hungUpstream.closeAllConnections();
+    hungUpstream.close();
+    expect(closeResult).toBe("closed");
   });
 });

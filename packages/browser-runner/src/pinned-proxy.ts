@@ -31,6 +31,19 @@ export async function createPinnedProxy(options: {
     return undefined;
   };
 
+  const activeHandles = new Set<{ destroy: () => void }>();
+  const trackHandle = <
+    T extends { destroy: () => void; once: (event: "close", listener: () => void) => unknown },
+  >(
+    handle: T,
+  ): T => {
+    activeHandles.add(handle);
+    handle.once("close", () => {
+      activeHandles.delete(handle);
+    });
+    return handle;
+  };
+
   const server = createHttpServer(async (request, response) => {
     let parsed: URL;
     try {
@@ -55,24 +68,36 @@ export async function createPinnedProxy(options: {
     delete headers["proxy-connection"];
     headers.host = destination.url.host;
     headers.connection = "close";
-    const upstream = httpRequest(
-      {
-        hostname: destination.address,
-        port: Number(destination.url.port || 80),
-        method: request.method,
-        path: `${destination.url.pathname}${destination.url.search}`,
-        headers,
-      },
-      (upstreamResponse) => {
-        const responseHeaders = { ...upstreamResponse.headers };
-        delete responseHeaders["proxy-authenticate"];
-        response.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders);
-        upstreamResponse.pipe(response);
-      },
+    const upstream = trackHandle(
+      httpRequest(
+        {
+          hostname: destination.address,
+          port: Number(destination.url.port || 80),
+          method: request.method,
+          path: `${destination.url.pathname}${destination.url.search}`,
+          headers,
+          agent: false,
+        },
+        (upstreamResponse) => {
+          const responseHeaders = { ...upstreamResponse.headers };
+          delete responseHeaders.connection;
+          delete responseHeaders["keep-alive"];
+          delete responseHeaders["proxy-authenticate"];
+          delete responseHeaders["proxy-connection"];
+          response.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders);
+          upstreamResponse.pipe(response);
+          upstreamResponse.once("aborted", () => {
+            if (!response.writableEnded) response.destroy();
+          });
+        },
+      ),
     );
     upstream.on("error", () => {
       if (!response.headersSent) response.writeHead(502);
       response.end();
+    });
+    response.once("close", () => {
+      if (!response.writableFinished) upstream.destroy();
     });
     request.pipe(upstream);
   });
@@ -91,17 +116,17 @@ export async function createPinnedProxy(options: {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
-    const upstream = connect(
-      { host: destination.address, port: Number(destination.url.port || 443) },
-      () => {
+    const upstream = trackHandle(
+      connect({ host: destination.address, port: Number(destination.url.port || 443) }, () => {
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         if (head.length) upstream.write(head);
         upstream.pipe(client);
         client.pipe(upstream);
-      },
+      }),
     );
     upstream.on("error", () => client.destroy());
     client.on("error", () => upstream.destroy());
+    client.once("close", () => upstream.destroy());
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -113,8 +138,11 @@ export async function createPinnedProxy(options: {
   return {
     serverUrl: `http://127.0.0.1:${address.port}`,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        for (const handle of activeHandles) handle.destroy();
+        activeHandles.clear();
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      }),
   };
 }

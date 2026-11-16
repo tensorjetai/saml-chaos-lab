@@ -310,6 +310,26 @@ export function buildHostResolverRules(
     .join(",");
 }
 
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Build a pure-HTML replay form so bundlers or obfuscators never corrupt browser-evaluated DOM code. */
+export function renderReplayFormHtml(action: string, fields: [string, string][]): string {
+  const inputs = fields
+    .map(
+      ([name, value]) =>
+        `<input type="hidden" name="${escapeHtmlAttribute(name)}" value="${escapeHtmlAttribute(value)}">`,
+    )
+    .join("");
+  return `<!doctype html><html><body><form method="post" action="${escapeHtmlAttribute(action)}">${inputs}<button type="submit">Replay</button></form></body></html>`;
+}
+
 export function parseReplayFormBody(body: string): [string, string][] {
   const parameters = new URLSearchParams(body);
   const response = parameters.get("SAMLResponse");
@@ -645,29 +665,13 @@ export async function runReplayWithPlaywright(
     const fields = parseReplayFormBody(capturedBody);
     const timing = extractSamlTimingFromFormBody(capturedBody);
     const replayPage = await context.newPage();
-    await replayPage.setContent("<!doctype html><html><body></body></html>");
+    await replayPage.setContent(renderReplayFormHtml(options.acsUrl, fields));
     const [replay] = await Promise.all([
       replayPage.waitForNavigation({
         waitUntil: "domcontentloaded",
         timeout: options.timeoutMs,
       }),
-      replayPage.evaluate(
-        ({ action, values }) => {
-          const form = document.createElement("form");
-          form.method = "post";
-          form.action = action;
-          for (const [name, value] of values) {
-            const input = document.createElement("input");
-            input.type = "hidden";
-            input.name = name;
-            input.value = value;
-            form.append(input);
-          }
-          document.body.append(form);
-          form.submit();
-        },
-        { action: options.acsUrl, values: fields },
-      ),
+      replayPage.locator('button[type="submit"]').click(),
     ]);
     const finalUrl = replayPage.url();
     const replayStatus = replay?.status();
