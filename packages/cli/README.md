@@ -90,17 +90,17 @@ npx saml-chaos-lab test \
   --fail-on high
 ```
 
-| Option                    | Required | Default              | Description                                                                      |
-| :------------------------ | :------- | :------------------- | :------------------------------------------------------------------------------- |
-| `--login-url <url>`       | **Yes**  | —                    | SP login entry URL that initiates SAML `AuthnRequest` redirects.                 |
-| `--acs-url <url>`         | **Yes**  | —                    | SP Assertion Consumer Service endpoint expecting `POST` SAML responses.          |
-| `--sp-entity-id <id>`     | **Yes**  | —                    | Expected Service Provider `EntityID` / Audience URI.                             |
-| `--success-url <pattern>` | **Yes**  | —                    | Regular expression matching the post-login authenticated URL (evaluated safely). |
-| `--dom-selector <css>`    | No       | —                    | Optional CSS selector required to appear after a successful login.               |
-| `--failure-url <pattern>` | No       | `/\/saml\/error(?:\? | $)/`                                                                             | Regular expression matching explicit SP SSO rejection URLs. |
-| `--sign-mode <mode>`      | No       | `assertion`          | Signed XML scope: `assertion`, `response`, or `both`.                            |
-| `--fail-on <level>`       | No       | `high`               | Exit with code `1` if any failed scenario meets `high` or `critical`.            |
-| `--state-dir <dir>`       | No       | `.saml-chaos-lab`    | State directory created by `saml-chaos-lab metadata`.                            |
+| Option                    | Required | Default                                   | Description                                                                      |
+| :------------------------ | :------- | :---------------------------------------- | :------------------------------------------------------------------------------- |
+| `--login-url <url>`       | **Yes**  | —                                         | SP login entry URL that initiates SAML `AuthnRequest` redirects.                 |
+| `--acs-url <url>`         | **Yes**  | —                                         | SP Assertion Consumer Service endpoint expecting `POST` SAML responses.          |
+| `--sp-entity-id <id>`     | **Yes**  | —                                         | Expected Service Provider `EntityID` / Audience URI.                             |
+| `--success-url <pattern>` | **Yes**  | —                                         | Regular expression matching the post-login authenticated URL (evaluated safely). |
+| `--dom-selector <css>`    | No       | —                                         | Optional CSS selector required to appear after a successful login.               |
+| `--failure-url <pattern>` | No       | <code>/\/saml\/error(?:\?&#124;$)/</code> | Regular expression matching explicit SP SSO rejection URLs.                      |
+| `--sign-mode <mode>`      | No       | `assertion`                               | Signed XML scope: `assertion`, `response`, or `both`.                            |
+| `--fail-on <level>`       | No       | `high`                                    | Exit with code `1` if any failed scenario meets `high` or `critical`.            |
+| `--state-dir <dir>`       | No       | `.saml-chaos-lab`                         | State directory created by `saml-chaos-lab metadata`.                            |
 
 ### Exit Codes
 
