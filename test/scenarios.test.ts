@@ -5,6 +5,7 @@ import {
   type ResponsePlan,
 } from "@saml-chaos/saml-core";
 import { buildScenarioPlan, renderScenario, scenarioCatalog } from "@saml-chaos/scenarios";
+import { statusFor } from "../packages/cli/src/helpers.js";
 
 const current = generateSigningMaterial();
 const next = generateSigningMaterial();
@@ -50,5 +51,14 @@ describe("open-core baseline scenario catalog", () => {
     expect(built.plan.conditionsNotOnOrAfter?.getTime()).toBeLessThanOrEqual(
       base.now!.getTime() - 5 * 60_000,
     );
+  });
+
+  it("evaluates accept_or_reject outcomes as passed for local success or rejection and preserves fail-closed states", () => {
+    expect(statusFor("accept_or_reject", "success")).toBe("passed");
+    expect(statusFor("accept_or_reject", "rejected")).toBe("passed");
+    expect(statusFor("accept_or_reject", "inconclusive")).toBe("inconclusive");
+    expect(statusFor("accept_or_reject", "blocked")).toBe("blocked");
+    expect(statusFor("accept_or_reject", "error")).toBe("error");
+    expect(statusFor("accept_or_reject", "timeout")).toBe("inconclusive");
   });
 });

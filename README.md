@@ -48,11 +48,11 @@ See the full CLI flag reference, CI workflow example, and scenario catalog in [`
 
 ## Commercial / Pro Edition
 
-The full **38-scenario adversarial CVE suite** (`SAML-XSW-001..010`, `SAML-C14N-001..003`, `SAML-DIFF-*`, `SAML-ATTR-001`, `SAML-XML-*`, `SAML-FLOW-*`, `SAML-CERT-*`, `SAML-SIG-002..004`, `SAML-REPLAY-001`), SHA-256 tamper-evident JSON/HTML/SARIF audit reports, and offline Ed25519 license verification are distributed via `registry.tensorjetai.com/saml-chaos-lab-commercial:0.1.2` ([saml.tensorjetai.com](https://saml.tensorjetai.com)):
+The full **38-scenario adversarial CVE suite** (`SAML-XSW-001..010`, `SAML-C14N-001..003`, `SAML-DIFF-*`, `SAML-ATTR-001`, `SAML-XML-*`, `SAML-FLOW-*`, `SAML-CERT-*`, `SAML-SIG-002..004`, `SAML-REPLAY-001`), SHA-256 tamper-evident JSON/HTML/SARIF audit reports, and offline Ed25519 license verification are distributed via `registry.tensorjetai.com/saml-chaos-lab-commercial:0.1.3` ([saml.tensorjetai.com](https://saml.tensorjetai.com)):
 
 ```bash
 echo "$TJ_LICENSE_KEY" | docker login registry.tensorjetai.com -u license --password-stdin
-docker pull registry.tensorjetai.com/saml-chaos-lab-commercial:0.1.2
+docker pull registry.tensorjetai.com/saml-chaos-lab-commercial:0.1.3
 ```
 
 ---

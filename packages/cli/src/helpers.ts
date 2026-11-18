@@ -162,13 +162,16 @@ export async function writeMetadata(options: { out?: string; stateDir?: string }
 }
 
 export function statusFor(
-  expected: "accept" | "reject" | "observe",
+  expected: "accept" | "reject" | "observe" | "accept_or_reject",
   outcome: string,
 ): ScenarioCheckResult["status"] {
   if (outcome === "blocked") return "blocked";
   if (outcome === "error") return "error";
   if (outcome === "timeout" || outcome === "inconclusive") return "inconclusive";
   if (expected === "observe") return "passed";
+  if (expected === "accept_or_reject") {
+    return outcome === "success" || outcome === "rejected" ? "passed" : "failed";
+  }
   return (expected === "accept" && outcome === "success") ||
     (expected === "reject" && outcome === "rejected")
     ? "passed"

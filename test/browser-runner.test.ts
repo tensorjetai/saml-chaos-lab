@@ -11,6 +11,7 @@ import {
   renderReplayFormHtml,
   replayWasRejected,
   requestAllowed,
+  runWithPlaywright,
   sanitizeObservedUrl,
   shouldCaptureSamlPost,
   type BrowserSession,
@@ -433,4 +434,56 @@ describe("browser outcome observation", () => {
     hungUpstream.close();
     expect(closeResult).toBe("closed");
   });
+
+  it.each([400, 401, 403, 500])(
+    "classifies direct HTTP %i from /saml/acs via JS form submit as rejected",
+    async (acsStatus) => {
+      let port = 0;
+      const server = createHttpServer((req, res) => {
+        if (req.url === "/activate") {
+          res.writeHead(200, { "content-type": "text/html" });
+          res.end("<!doctype html><html><body>activated</body></html>");
+          return;
+        }
+        if (req.url === "/login") {
+          res.writeHead(200, { "content-type": "text/html" });
+          res.end(
+            `<!doctype html><html><body><form id="saml" method="post" action="http://127.0.0.1:${port}/saml/acs"><input type="hidden" name="SAMLResponse" value="abc"></form><script>document.getElementById('saml').submit()</script></body></html>`,
+          );
+          return;
+        }
+        if (req.url === "/saml/acs" && req.method === "POST") {
+          res.writeHead(acsStatus, { "content-type": "text/html" });
+          res.end("<!doctype html><html><body>Rejected</body></html>");
+          return;
+        }
+        res.writeHead(404).end();
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("server_port_unavailable");
+      port = address.port;
+      try {
+        const result = await runWithPlaywright({
+          activationUrl: `http://127.0.0.1:${port}/activate`,
+          loginUrl: `http://127.0.0.1:${port}/login`,
+          acsUrl: `http://127.0.0.1:${port}/saml/acs`,
+          allowedHosts: ["127.0.0.1"],
+          allowedOrigins: [`http://127.0.0.1:${port}`],
+          pinnedAddresses: new Map([["127.0.0.1", ["127.0.0.1"]]]),
+          successUrl: /\/success$/,
+          failureUrls: [/\/saml\/error$/],
+          timeoutMs: 10_000,
+        });
+        expect(result).toMatchObject({
+          outcome: "rejected",
+          signal: "http_rejection",
+          httpStatus: acsStatus,
+        });
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    },
+  );
 });

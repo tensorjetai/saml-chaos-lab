@@ -448,6 +448,7 @@ export async function createPlaywrightSession(options: {
       ignoreHTTPSErrors: false,
       acceptDownloads: false,
       serviceWorkers: "block",
+      bypassCSP: true,
     })
     .catch(failSetup);
   const page = await context.newPage().catch(failSetup);
@@ -464,6 +465,15 @@ export async function createPlaywrightSession(options: {
     if (captured) timing = captured;
   });
   page.on("response", (response) => {
+    const request = response.request();
+    const isMainFrameNavigation =
+      request.isNavigationRequest() && request.frame() === page.mainFrame();
+    if (
+      isMainFrameNavigation ||
+      shouldCaptureSamlPost(request.method(), response.url(), options.acsUrl)
+    ) {
+      status = response.status();
+    }
     if (response.status() < 300 || response.status() >= 400) return;
     const location = response.headers().location;
     if (location) {
@@ -511,22 +521,24 @@ export async function createPlaywrightSession(options: {
         throw new Error("blocked_request");
       }
       redirectLocation = undefined;
+      status = undefined;
       resetNavigationBudget();
       const response = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: timeoutMs,
       });
       if (!response?.ok()) throw new Error("activation_failed");
-      status = response.status();
+      status ??= response.status();
     },
     goto: async (url, timeoutMs) => {
       redirectLocation = undefined;
+      status = undefined;
       resetNavigationBudget();
       const response = await page.goto(url, {
         waitUntil: "networkidle",
         timeout: timeoutMs,
       });
-      status = response?.status();
+      status ??= response?.status();
     },
     currentUrl: () => page.url(),
     httpStatus: () => status,
